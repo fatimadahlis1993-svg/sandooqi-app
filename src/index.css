@@ -20,6 +20,14 @@
   font-variant-numeric: tabular-nums;
 }
 
+.safe-top {
+  padding-top: max(var(--safe-area-inset-top, 0px), env(safe-area-inset-top, 0px));
+}
+
+.safe-bottom {
+  padding-bottom: max(var(--safe-area-inset-bottom, 0px), env(safe-area-inset-bottom, 0px));
+}
+
 .privacy-blur {
   filter: blur(7px);
   user-select: none;

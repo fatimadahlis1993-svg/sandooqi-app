@@ -5,6 +5,7 @@ import {
   Eye,
   EyeOff,
   Home,
+  Lock,
   Mic,
   Moon,
   PiggyBank,
@@ -18,6 +19,7 @@ import {
   Vault,
   X,
 } from 'lucide-react';
+import { AppLockOverlay } from './components/AppLockOverlay';
 import { BillsDebtsView } from './components/BillsDebtsView';
 import { DialogModal, ModalRequest } from './components/DialogModal';
 import { ExpensesView } from './components/ExpensesView';
@@ -26,6 +28,7 @@ import { GlobalSearchModal } from './components/GlobalSearchModal';
 import { GoalsView } from './components/GoalsView';
 import { HomeView } from './components/HomeView';
 import { OfflineBanner, PWAInstallButton } from './components/PWAInstallButton';
+import { QuickAddFab } from './components/QuickAddFab';
 import { ReportsView } from './components/ReportsView';
 import { TailoringView } from './components/TailoringView';
 import { ToolsSettingsView } from './components/ToolsSettingsView';
@@ -39,6 +42,8 @@ import {
   OrderStage,
   SandooqiDB,
   SeasonalBudget,
+  SewDebtRecord,
+  SewMaterial,
   SewingOrder,
 } from './types/sandooqi';
 import {
@@ -47,11 +52,13 @@ import {
   debtRemaining,
   fmt,
   formatYM,
+  getTxYM,
   localDateISO,
   makeTransaction,
   nextId,
   shiftYM,
   todayLabel,
+  transactionAccount,
 } from './utils/finance';
 import {
   createDefaultDB,
@@ -82,6 +89,7 @@ export default function App() {
   const [savePct, setSavePct] = useState(20);
   const [targetGoalId, setTargetGoalId] = useState<number>(0);
   const [previewPhoto, setPreviewPhoto] = useState<{ src: string; title: string } | null>(null);
+  const [isAppLocked, setIsAppLocked] = useState(false);
   const [toast, setToast] = useState<{ text: string; undo?: SandooqiDB } | null>(null);
   const toastTimerRef = useRef<number | null>(null);
 
@@ -120,6 +128,7 @@ export default function App() {
     loadSandooqiDB().then(({ db: loaded, migratedFromLegacy }) => {
       if (!mounted) return;
       setDb(loaded);
+      if (loaded.appLockEnabled) setIsAppLocked(true);
       if (loaded.goals[0]) setTargetGoalId(loaded.goals[0].id);
       if (migratedFromLegacy) {
         showToast('تم ترحيل بياناتك السابقة بنجاح إلى IndexedDB');
@@ -188,6 +197,10 @@ export default function App() {
         </div>
       </div>
     );
+  }
+
+  if (isAppLocked) {
+    return <AppLockOverlay storedPin={db.pin} onUnlock={() => setIsAppLocked(false)} />;
   }
 
   // Family-only restricted overlay
@@ -288,7 +301,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#fdf8ef] pb-24 text-slate-900 dark:bg-slate-950 dark:text-slate-100 md:pb-8">
       {/* Top App Bar */}
-      <header className="no-print sticky top-0 z-30 border-b border-emerald-800 bg-emerald-700 text-white">
+      <header className="no-print safe-top sticky top-0 z-30 border-b border-emerald-800 bg-emerald-700 text-white">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
           <div className="flex items-center gap-2.5">
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/15 text-lg font-bold text-amber-300">
@@ -338,6 +351,16 @@ export default function App() {
             >
               {db.darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
+            {db.appLockEnabled && (
+              <button
+                type="button"
+                onClick={() => setIsAppLocked(true)}
+                aria-label="قفل التطبيق"
+                className="rounded-lg bg-white/10 p-2 text-white hover:bg-white/20"
+              >
+                <Lock className="h-4 w-4" />
+              </button>
+            )}
           </div>
         </div>
 
@@ -547,7 +570,14 @@ export default function App() {
           <ExpensesView
             db={db}
             onPreviewPhoto={(src, title) => setPreviewPhoto({ src, title })}
-            onAddExpense={({ title, amount, person, shop, payMode, creditor, due, photo }) => {
+            onNotify={showToast}
+            onAddExpense={({ title, amount, person, shop, category, dateISO, payMode, creditor, due, photo }) => {
+              const targetYM =
+                dateISO && /^\d{4}-\d{2}/.test(dateISO) ? dateISO.slice(0, 7) : currentYM();
+              const fullTitle =
+                category && category !== 'أخرى' && !title.includes(category)
+                  ? `${title} (${category})`
+                  : title;
               if (payMode === 'debt') {
                 commitDB(
                   (prev) => {
@@ -555,14 +585,14 @@ export default function App() {
                     const newDebt: HomeDebt = {
                       id: debtId,
                       creditor,
-                      item: title,
-                      activity: 'مشتريات',
+                      item: fullTitle,
+                      activity: category || 'مشتريات',
                       amount,
                       paid: 0,
                       payments: [],
                       due: due || undefined,
                       date: todayLabel(),
-                      ym: currentYM(),
+                      ym: targetYM,
                       direction: 'out',
                       photo: photo || undefined,
                     };
@@ -575,8 +605,10 @@ export default function App() {
                           cat: 'credit_purchase',
                           source: 'credit-purchase',
                           type: 'out',
-                          name: `${title} (دين: ${creditor})`,
+                          name: `${fullTitle} (دين: ${creditor})`,
                           amount,
+                          dateISO: dateISO || localDateISO(),
+                          ym: targetYM,
                           person,
                           shop: creditor,
                           linkedCreditor: creditor,
@@ -598,8 +630,10 @@ export default function App() {
                         accountId: 'family',
                         cat: 'exp',
                         type: 'out',
-                        name: title,
+                        name: fullTitle,
                         amount,
+                        dateISO: dateISO || localDateISO(),
+                        ym: targetYM,
                         person,
                         shop: shop || undefined,
                         photo: photo || undefined,
@@ -611,31 +645,81 @@ export default function App() {
                 );
               }
             }}
+            onAddFamilyExpense={({ person, category, amount }) =>
+              commitDB(
+                (prev) => ({
+                  ...prev,
+                  tx: [
+                    makeTransaction({
+                      accountId: 'family',
+                      cat: 'fam',
+                      type: 'out',
+                      name: `${category} (${person})`,
+                      amount,
+                      person,
+                    }),
+                    ...prev.tx,
+                  ],
+                }),
+                { toastText: `تم تسجيل مصروف ${person} (${fmt(amount)})`, allowUndo: true, chime: true }
+              )
+            }
             onDeleteTransaction={(id) =>
               commitDB(
                 (prev) => ({ ...prev, tx: prev.tx.filter((t) => t.id !== id) }),
                 { toastText: 'تم حذف العملية', allowUndo: true }
               )
             }
-            onAddMarketItem={(name, price) =>
+            onAddMarketItem={(name, quantity, unit, price) =>
               commitDB(
                 (prev) => ({
                   ...prev,
                   marketList: [
-                    { id: nextId(), name, quantity: 1, unit: 'حبة', price, done: false },
+                    { id: nextId(), name, quantity, unit, price, done: false },
                     ...prev.marketList,
                   ],
                 }),
                 { toastText: `تمت إضافة «${name}» لقائمة السوق` }
               )
             }
-            onToggleMarketItem={(id) =>
+            onUpdateMarketItem={(id, patch) =>
               commitDB((prev) => ({
                 ...prev,
-                marketList: prev.marketList.map((m) =>
-                  m.id === id ? { ...m, done: !m.done } : m
-                ),
+                marketList: prev.marketList.map((m) => (m.id === id ? { ...m, ...patch } : m)),
               }))
+            }
+            onToggleMarketItem={(id, recordExpense) =>
+              commitDB(
+                (prev) => {
+                  const target = prev.marketList.find((m) => m.id === id);
+                  if (!target) return prev;
+                  const nextDone = !target.done;
+                  const lineCost = Math.round(
+                    (Number(target.price) || 0) * (Number(target.quantity) || 1)
+                  );
+                  const shouldLogExpense = nextDone && recordExpense && lineCost > 0;
+                  return {
+                    ...prev,
+                    marketList: prev.marketList.map((m) =>
+                      m.id === id ? { ...m, done: nextDone } : m
+                    ),
+                    tx: shouldLogExpense
+                      ? [
+                          makeTransaction({
+                            accountId: 'family',
+                            cat: 'exp',
+                            type: 'out',
+                            name: `مشتريات السوق: ${target.name} (${target.quantity || 1} ${target.unit || 'حبة'})`,
+                            amount: lineCost,
+                            person: prev.family[0] || '',
+                          }),
+                          ...prev.tx,
+                        ]
+                      : prev.tx,
+                  };
+                },
+                { chime: true }
+              )
             }
             onDeleteMarketItem={(id) =>
               commitDB(
@@ -649,13 +733,20 @@ export default function App() {
                 { toastText: 'تم مسح الأغراض المقتناة', allowUndo: true }
               )
             }
+            onUpdateMarketBudget={(budget) =>
+              commitDB(
+                (prev) => ({ ...prev, marketBudget: budget }),
+                { toastText: `تم تحديث سقف قائمة السوق إلى ${fmt(budget)}` }
+              )
+            }
           />
         )}
 
         {page === 'bills' && (
           <BillsDebtsView
             db={db}
-            onAddHomeDebt={({ creditor, item, amount, due }) =>
+            onPreviewPhoto={(src, title) => setPreviewPhoto({ src, title })}
+            onAddHomeDebt={({ creditor, item, activity, amount, due, direction, photo }) =>
               commitDB(
                 (prev) => ({
                   ...prev,
@@ -664,55 +755,62 @@ export default function App() {
                       id: nextId(),
                       creditor,
                       item,
-                      activity: 'دين عام',
+                      activity: activity || 'دين عام',
                       amount,
                       paid: 0,
                       payments: [],
                       due: due || undefined,
                       date: todayLabel(),
                       ym: currentYM(),
-                      direction: 'out',
+                      direction: direction || 'out',
+                      photo: photo || undefined,
                     },
                     ...prev.homeDebts,
                   ],
                 }),
-                { toastText: `تم تسجيل دين لـ ${creditor}`, allowUndo: true, chime: true }
+                {
+                  toastText:
+                    direction === 'in'
+                      ? `تم تسجيل مستحق (له) عند ${creditor}`
+                      : `تم تسجيل دين (عليه) لـ ${creditor}`,
+                  allowUndo: true,
+                  chime: true,
+                }
               )
             }
             onPayHomeDebt={(debt) => {
               const rem = debtRemaining(debt);
+              const isIn = debt.direction === 'in';
               setModal({
                 kind: 'input',
-                title: `تسديد دين — ${debt.creditor}`,
+                title: `${isIn ? 'تحصيل مستحق' : 'تسديد دين'} — ${debt.creditor}`,
                 message: `المتبقي حالياً: ${fmt(rem)}`,
                 initialValue: String(rem),
                 inputType: 'number',
-                checkboxLabel: 'خصم المبلغ المدفوع من الخزينة العائلية',
+                checkboxLabel: isIn
+                  ? 'إضافة المبلغ المحصّل إلى الخزينة العائلية'
+                  : 'خصم المبلغ المدفوع من الخزينة العائلية',
                 checkboxDefault: true,
-                confirmLabel: 'تسديد الدفعة',
-                onSubmit: (val, deductTreasury) => {
+                confirmLabel: isIn ? 'تحصيل الدفعة' : 'تسديد الدفعة',
+                onSubmit: (val, applyTreasury) => {
                   const payAmt = Math.min(rem, Math.max(0, Number(val) || 0));
                   if (payAmt <= 0) return;
                   commitDB(
                     (prev) => {
-                      const txId = nextId();
-                      const nextTx = deductTreasury
-                        ? [
-                            makeTransaction({
-                              accountId: 'family',
-                              cat: 'debt_payment',
-                              type: 'out',
-                              name: `تسديد دين: ${debt.creditor} (${debt.item})`,
-                              amount: payAmt,
-                              linkedCreditor: debt.creditor,
-                              homeDebtId: debt.id,
-                            }),
-                            ...prev.tx,
-                          ]
-                        : prev.tx;
+                      const paymentTx = applyTreasury
+                        ? makeTransaction({
+                            accountId: 'family',
+                            cat: isIn ? 'inc' : 'debt_payment',
+                            type: isIn ? 'in' : 'out',
+                            name: `${isIn ? 'تحصيل مستحق' : 'تسديد دين'}: ${debt.creditor} (${debt.item})`,
+                            amount: payAmt,
+                            linkedCreditor: debt.creditor,
+                            homeDebtId: debt.id,
+                          })
+                        : null;
                       return {
                         ...prev,
-                        tx: nextTx,
+                        tx: paymentTx ? [paymentTx, ...prev.tx] : prev.tx,
                         homeDebts: prev.homeDebts.map((d) =>
                           d.id === debt.id
                             ? {
@@ -724,7 +822,7 @@ export default function App() {
                                     amount: payAmt,
                                     ym: currentYM(),
                                     date: todayLabel(),
-                                    transactionId: deductTreasury ? txId : undefined,
+                                    transactionId: paymentTx?.id,
                                   },
                                 ],
                               }
@@ -732,7 +830,96 @@ export default function App() {
                         ),
                       };
                     },
-                    { toastText: `تم تسديد ${fmt(payAmt)} لـ ${debt.creditor}`, allowUndo: true, chime: true }
+                    {
+                      toastText: `تم ${isIn ? 'تحصيل' : 'تسديد'} ${fmt(payAmt)} لـ ${debt.creditor}`,
+                      allowUndo: true,
+                      chime: true,
+                    }
+                  );
+                },
+              });
+            }}
+            onPayCreditorAll={(creditor, totalRemaining, direction = 'out') => {
+              const isIn = direction === 'in';
+              setModal({
+                kind: 'input',
+                title: `${isIn ? 'تحصيل مستحقات' : 'تسديد ديون'} — ${creditor}`,
+                message: `إجمالي المتبقي: ${fmt(totalRemaining)} (يوزّع تلقائياً على الأقدم أولاً)`,
+                initialValue: String(totalRemaining),
+                inputType: 'number',
+                checkboxLabel: isIn
+                  ? 'إضافة المبلغ المحصّل إلى الخزينة العائلية'
+                  : 'خصم المبلغ المدفوع من الخزينة العائلية',
+                checkboxDefault: true,
+                confirmLabel: isIn ? 'تحصيل الدفعة' : 'تسديد الدفعة',
+                onSubmit: (val, applyTreasury) => {
+                  const requested = Math.min(totalRemaining, Math.max(0, Number(val) || 0));
+                  if (requested <= 0) return;
+                  commitDB(
+                    (prev) => {
+                      const key = creditor.trim();
+                      const openOldestFirst = prev.homeDebts
+                        .filter(
+                          (d) =>
+                            (d.creditor || 'غير محدد').trim() === key &&
+                            (d.direction === 'in' ? 'in' : 'out') === direction &&
+                            debtRemaining(d) > 0
+                        )
+                        .slice()
+                        .sort((a, b) => a.id - b.id);
+                      let budget = requested;
+                      const allocations: { debtId: number; amount: number }[] = [];
+                      const allocMap = new Map<number, number>();
+                      for (const d of openOldestFirst) {
+                        if (budget <= 0) break;
+                        const rem = debtRemaining(d);
+                        const slice = Math.min(rem, budget);
+                        if (slice > 0) {
+                          allocations.push({ debtId: d.id, amount: slice });
+                          allocMap.set(d.id, slice);
+                          budget -= slice;
+                        }
+                      }
+                      const totalPaid = allocations.reduce((s, a) => s + a.amount, 0);
+                      if (totalPaid <= 0) return prev;
+                      const paymentTx = applyTreasury
+                        ? makeTransaction({
+                            accountId: 'family',
+                            cat: isIn ? 'inc' : 'debt_payment',
+                            type: isIn ? 'in' : 'out',
+                            name: `${isIn ? 'تحصيل مستحقات' : 'تسديد ديون'}: ${creditor}`,
+                            amount: totalPaid,
+                            linkedCreditor: creditor,
+                            homeDebtAllocations: allocations,
+                          })
+                        : null;
+                      return {
+                        ...prev,
+                        tx: paymentTx ? [paymentTx, ...prev.tx] : prev.tx,
+                        homeDebts: prev.homeDebts.map((d) => {
+                          const add = allocMap.get(d.id);
+                          if (!add) return d;
+                          return {
+                            ...d,
+                            paid: d.paid + add,
+                            payments: [
+                              ...(d.payments || []),
+                              {
+                                amount: add,
+                                ym: currentYM(),
+                                date: todayLabel(),
+                                transactionId: paymentTx?.id,
+                              },
+                            ],
+                          };
+                        }),
+                      };
+                    },
+                    {
+                      toastText: `تم ${isIn ? 'تحصيل' : 'تسديد'} ${fmt(requested)} لـ ${creditor}`,
+                      allowUndo: true,
+                      chime: true,
+                    }
                   );
                 },
               });
@@ -830,12 +1017,20 @@ export default function App() {
                 { toastText: 'تم حذف سجل الكراء', allowUndo: true }
               )
             }
-            onAddObligation={(name, amount, dueDay) =>
+            onAddObligation={({ name, amount, dueDay, creditor, photo }) =>
               commitDB(
                 (prev) => ({
                   ...prev,
                   obligations: [
-                    { id: nextId(), name, amount, dueDay, paidMonths: [] },
+                    {
+                      id: nextId(),
+                      name,
+                      amount,
+                      dueDay,
+                      paidMonths: [],
+                      creditor,
+                      photo,
+                    },
                     ...prev.obligations,
                   ],
                 }),
@@ -883,6 +1078,116 @@ export default function App() {
                   obligations: prev.obligations.filter((o) => o.id !== id),
                 }),
                 { toastText: 'تم حذف الالتزام', allowUndo: true }
+              )
+            }
+            onAddBillEntry={({ name, amount, creditor, status, due, unpaidMonths, recurring, photo }) =>
+              commitDB(
+                (prev) => {
+                  const ym = currentYM();
+                  const monthsCount = Math.max(1, unpaidMonths || 1);
+                  const totalDebtAmt = amount * monthsCount;
+                  const nextDebts =
+                    status === 'pending'
+                      ? [
+                          {
+                            id: nextId(),
+                            creditor: creditor || name,
+                            item: monthsCount > 1 ? `${name} (${monthsCount} أشهر)` : name,
+                            activity: 'فواتير',
+                            amount: totalDebtAmt,
+                            paid: 0,
+                            payments: [],
+                            due: due || undefined,
+                            date: todayLabel(),
+                            ym,
+                            direction: 'out' as const,
+                            photo: photo || undefined,
+                          },
+                          ...prev.homeDebts,
+                        ]
+                      : prev.homeDebts;
+                  const nextTx =
+                    status === 'paid'
+                      ? [
+                          makeTransaction({
+                            accountId: 'family',
+                            cat: 'bill',
+                            type: 'out',
+                            name: `فاتورة: ${name}${creditor && creditor !== name ? ` (${creditor})` : ''}`,
+                            amount,
+                            photo: photo || undefined,
+                          }),
+                          ...prev.tx,
+                        ]
+                      : prev.tx;
+                  const nextObls = recurring
+                    ? [
+                        {
+                          id: nextId(),
+                          name,
+                          amount,
+                          dueDay: 15,
+                          paidMonths: status === 'paid' ? [ym] : [],
+                          creditor: creditor || undefined,
+                          photo: photo || undefined,
+                        },
+                        ...prev.obligations,
+                      ]
+                    : prev.obligations;
+                  return {
+                    ...prev,
+                    homeDebts: nextDebts,
+                    tx: nextTx,
+                    obligations: nextObls,
+                  };
+                },
+                {
+                  toastText:
+                    status === 'pending'
+                      ? `تم تسجيل فاتورة «${name}» في الديون`
+                      : `تم دفع فاتورة «${name}» وخصمها من الخزينة`,
+                  allowUndo: true,
+                  chime: true,
+                }
+              )
+            }
+            onAddSalaryDeduction={({ facAmount, facNote, srvAmount, srvNote, srvMonth }) =>
+              commitDB(
+                (prev) => {
+                  const added = [];
+                  if (facAmount > 0) {
+                    added.push(
+                      makeTransaction({
+                        accountId: 'family',
+                        cat: 'fac',
+                        type: 'out',
+                        name: facNote ? `اقتطاع فاسيليتي: ${facNote}` : 'اقتطاع فاسيليتي من الراتب',
+                        amount: facAmount,
+                        ym: currentYM(),
+                      })
+                    );
+                  }
+                  if (srvAmount > 0) {
+                    added.push(
+                      makeTransaction({
+                        accountId: 'family',
+                        cat: 'srv',
+                        type: 'out',
+                        name: srvNote ? `اقتطاع خدمات: ${srvNote}` : 'اقتطاع خدمات / سلفة من الراتب',
+                        amount: srvAmount,
+                        ym: srvMonth || currentYM(),
+                      })
+                    );
+                  }
+                  return { ...prev, tx: [...added, ...prev.tx] };
+                },
+                { toastText: 'تم تسجيل اقتطاع الراتب', allowUndo: true, chime: true }
+              )
+            }
+            onDeleteTransaction={(id) =>
+              commitDB(
+                (prev) => ({ ...prev, tx: prev.tx.filter((t) => t.id !== id) }),
+                { toastText: 'تم حذف العملية', allowUndo: true }
               )
             }
             onAddFacPlan={(name, monthly, months) =>
@@ -1018,11 +1323,12 @@ export default function App() {
                 { toastText: `تمت إضافة حصّالة: ${name}` }
               )
             }
-            onDepositGoal={(goal: Goal) =>
+            onDepositGoal={(goal: Goal, presetAmount?: number) =>
               setModal({
                 kind: 'input',
                 title: `إيداع في حصّالة: ${goal.name}`,
                 message: `المدخر حالياً ${fmt(goal.saved)} من أصل ${fmt(goal.target)}`,
+                initialValue: presetAmount ? String(presetAmount) : undefined,
                 placeholder: 'المبلغ (دج)',
                 inputType: 'number',
                 checkboxLabel: 'خصم المبلغ من الحساب العائلي',
@@ -1055,6 +1361,48 @@ export default function App() {
                 },
               })
             }
+            onWithdrawGoal={(goal: Goal) => {
+              if (goal.saved <= 0) {
+                showToast('الحصّالة فارغة حالياً');
+                return;
+              }
+              setModal({
+                kind: 'input',
+                title: `سحب من حصّالة: ${goal.name}`,
+                message: `الرصيد المتاح للسحب: ${fmt(goal.saved)}`,
+                initialValue: String(goal.saved),
+                placeholder: 'المبلغ المسحوب (دج)',
+                inputType: 'number',
+                checkboxLabel: 'إضافة المبلغ المسحوب إلى الحساب العائلي',
+                checkboxDefault: true,
+                confirmLabel: 'تأكيد السحب',
+                onSubmit: (val, creditTreasury) => {
+                  const amt = Math.min(goal.saved, Math.max(0, Number(val) || 0));
+                  if (amt <= 0) return;
+                  commitDB(
+                    (prev) => ({
+                      ...prev,
+                      goals: prev.goals.map((g) =>
+                        g.id === goal.id ? { ...g, saved: Math.max(0, g.saved - amt) } : g
+                      ),
+                      tx: creditTreasury
+                        ? [
+                            makeTransaction({
+                              accountId: 'family',
+                              cat: 'inc',
+                              type: 'in',
+                              name: `سحب من حصّالة: ${goal.name}`,
+                              amount: amt,
+                            }),
+                            ...prev.tx,
+                          ]
+                        : prev.tx,
+                    }),
+                    { toastText: `تم سحب ${fmt(amt)} من ${goal.name}`, allowUndo: true, chime: true }
+                  );
+                },
+              });
+            }}
             onDeleteGoal={(id) =>
               commitDB(
                 (prev) => ({ ...prev, goals: prev.goals.filter((g) => g.id !== id) }),
@@ -1074,6 +1422,7 @@ export default function App() {
                       targetAmount: payload.targetAmount,
                       savedAmount: 0,
                       targetDateIso: payload.targetDateIso,
+                      notes: payload.notes,
                       createdAt: Date.now(),
                     },
                     ...prev.seasonalBudgets,
@@ -1140,28 +1489,42 @@ export default function App() {
         {page === 'tailoring' && (
           <TailoringView
             db={db}
-            onAddOrder={(order) =>
+            onAddOrder={(order, stockDeductions) =>
               commitDB(
-                (prev) => ({
-                  ...prev,
-                  orders: [
-                    { ...order, id: nextId(), date: todayLabel(), ym: currentYM() },
-                    ...prev.orders,
-                  ],
-                  tx:
-                    order.paid > 0
-                      ? [
-                          makeTransaction({
-                            accountId: 'sewing',
-                            cat: 'inc',
-                            type: 'in',
-                            name: `عربون خياطة: ${order.client} (${order.model})`,
-                            amount: order.paid,
-                          }),
-                          ...prev.tx,
-                        ]
-                      : prev.tx,
-                }),
+                (prev) => {
+                  const deductMap = new Map<number, number>();
+                  for (const d of stockDeductions) {
+                    deductMap.set(d.stockId, (deductMap.get(d.stockId) || 0) + d.qty);
+                  }
+                  const nextMaterials =
+                    deductMap.size > 0
+                      ? prev.sewMaterials.map((m) => {
+                          const q = deductMap.get(m.id);
+                          return q ? { ...m, qty: Math.max(0, Number((m.qty - q).toFixed(2))) } : m;
+                        })
+                      : prev.sewMaterials;
+                  return {
+                    ...prev,
+                    sewMaterials: nextMaterials,
+                    orders: [
+                      { ...order, id: nextId(), date: todayLabel(), ym: currentYM() },
+                      ...prev.orders,
+                    ],
+                    tx:
+                      order.paid > 0
+                        ? [
+                            makeTransaction({
+                              accountId: 'sewing',
+                              cat: 'inc',
+                              type: 'in',
+                              name: `عربون خياطة: ${order.client} (${order.model})`,
+                              amount: order.paid,
+                            }),
+                            ...prev.tx,
+                          ]
+                        : prev.tx,
+                  };
+                },
                 { toastText: `تم تسجيل طلبية ${order.client}`, allowUndo: true, chime: true }
               )
             }
@@ -1211,10 +1574,347 @@ export default function App() {
                 { toastText: 'تم حذف الطلبية', allowUndo: true }
               )
             }
+            onPreviewPhoto={(src, title) => setPreviewPhoto({ src, title })}
+            onAddMeasurement={(m) =>
+              commitDB(
+                (prev) => ({
+                  ...prev,
+                  measurements: [
+                    { ...m, id: nextId(), date: todayLabel() },
+                    ...(prev.measurements || []),
+                  ],
+                }),
+                { toastText: `تم حفظ مقاسات ${m.name}`, chime: true }
+              )
+            }
+            onDeleteMeasurement={(id) =>
+              commitDB(
+                (prev) => ({
+                  ...prev,
+                  measurements: (prev.measurements || []).filter((m) => m.id !== id),
+                }),
+                { toastText: 'تم حذف سجل المقاسات', allowUndo: true }
+              )
+            }
+            onAddSewService={(s) =>
+              commitDB(
+                (prev) => {
+                  const extraTx = [];
+                  if (s.paid > 0) {
+                    extraTx.push(
+                      makeTransaction({
+                        accountId: 'sewing',
+                        cat: 'inc',
+                        type: 'in',
+                        name: `خدمة خياطة: ${s.client} (${s.item})`,
+                        amount: s.paid,
+                      })
+                    );
+                  }
+                  const matCost = s.thread + s.supplies;
+                  if (matCost > 0) {
+                    extraTx.push(
+                      makeTransaction({
+                        accountId: 'sewing',
+                        cat: 'exp',
+                        type: 'out',
+                        name: `خيط ولوازم خدمة: ${s.client} (${s.item})`,
+                        amount: matCost,
+                      })
+                    );
+                  }
+                  return {
+                    ...prev,
+                    sewServices: [
+                      { ...s, id: nextId(), date: todayLabel(), ym: currentYM() },
+                      ...(prev.sewServices || []),
+                    ],
+                    tx: [...extraTx, ...prev.tx],
+                  };
+                },
+                { toastText: `تم تسجيل خدمة ${s.client}`, allowUndo: true, chime: true }
+              )
+            }
+            onDeleteSewService={(id) =>
+              commitDB(
+                (prev) => ({
+                  ...prev,
+                  sewServices: (prev.sewServices || []).filter((s) => s.id !== id),
+                }),
+                { toastText: 'تم حذف الخدمة', allowUndo: true }
+              )
+            }
+            onAddSewMaterial={(m) =>
+              commitDB(
+                (prev) => {
+                  const list = prev.sewMaterials || [];
+                  const existing = list.find(
+                    (x) =>
+                      x.name.trim().toLowerCase() === m.name.trim().toLowerCase() &&
+                      x.unit === m.unit
+                  );
+                  if (existing) {
+                    const totalQty = existing.qty + m.qty;
+                    const avgCost =
+                      totalQty > 0
+                        ? Math.round((existing.qty * existing.cost + m.qty * m.cost) / totalQty)
+                        : m.cost;
+                    return {
+                      ...prev,
+                      sewMaterials: list.map((x) =>
+                        x.id === existing.id
+                          ? {
+                              ...x,
+                              qty: Number(totalQty.toFixed(2)),
+                              cost: avgCost,
+                              min: m.min,
+                              date: todayLabel(),
+                            }
+                          : x
+                      ),
+                    };
+                  }
+                  return {
+                    ...prev,
+                    sewMaterials: [{ ...m, id: nextId(), date: todayLabel() }, ...list],
+                  };
+                },
+                { toastText: `تمت إضافة «${m.name}» لمخزون الورشة`, chime: true }
+              )
+            }
+            onUseSewMaterial={(mat: SewMaterial) =>
+              setModal({
+                kind: 'input',
+                title: `استعمال من المخزون — ${mat.name}`,
+                message: `المتوفر حالياً: ${mat.qty} ${mat.unit} (تكلفة الوحدة ${fmt(mat.cost)})`,
+                initialValue: String(Math.min(1, mat.qty)),
+                inputType: 'number',
+                confirmLabel: 'تأكيد الاستهلاك',
+                onSubmit: (val) => {
+                  const used = Math.min(mat.qty, Math.max(0, Number(val) || 0));
+                  if (used <= 0) return;
+                  const costAmt = Math.round(used * mat.cost);
+                  commitDB(
+                    (prev) => ({
+                      ...prev,
+                      sewMaterials: (prev.sewMaterials || []).map((x) =>
+                        x.id === mat.id
+                          ? { ...x, qty: Math.max(0, Number((x.qty - used).toFixed(2))) }
+                          : x
+                      ),
+                      tx:
+                        costAmt > 0
+                          ? [
+                              makeTransaction({
+                                accountId: 'sewing',
+                                cat: 'exp',
+                                type: 'out',
+                                name: `استهلاك مخزون: ${mat.name} (${used} ${mat.unit})`,
+                                amount: costAmt,
+                              }),
+                              ...prev.tx,
+                            ]
+                          : prev.tx,
+                    }),
+                    {
+                      toastText: `تم سحب ${used} ${mat.unit} من ${mat.name}`,
+                      allowUndo: true,
+                      chime: true,
+                    }
+                  );
+                },
+              })
+            }
+            onDeleteSewMaterial={(id) =>
+              commitDB(
+                (prev) => ({
+                  ...prev,
+                  sewMaterials: (prev.sewMaterials || []).filter((m) => m.id !== id),
+                }),
+                { toastText: 'تم حذف المادة من المخزون', allowUndo: true }
+              )
+            }
+            onAddSewProject={(p) =>
+              commitDB(
+                (prev) => {
+                  const extraTx = [];
+                  if (p.paid > 0) {
+                    extraTx.push(
+                      makeTransaction({
+                        accountId: 'sewing',
+                        cat: 'inc',
+                        type: 'in',
+                        name: `مبيعات مشروع: ${p.name}`,
+                        amount: p.paid,
+                      })
+                    );
+                  }
+                  const totalCost = p.fabric + p.supplies + p.other;
+                  if (totalCost > 0) {
+                    extraTx.push(
+                      makeTransaction({
+                        accountId: 'sewing',
+                        cat: 'exp',
+                        type: 'out',
+                        name: `تكاليف مشروع: ${p.name}`,
+                        amount: totalCost,
+                      })
+                    );
+                  }
+                  return {
+                    ...prev,
+                    sewProjects: [
+                      { ...p, id: nextId(), date: todayLabel(), ym: currentYM() },
+                      ...(prev.sewProjects || []),
+                    ],
+                    tx: [...extraTx, ...prev.tx],
+                  };
+                },
+                { toastText: `تم حفظ مشروع «${p.name}»`, allowUndo: true, chime: true }
+              )
+            }
+            onDeleteSewProject={(id) =>
+              commitDB(
+                (prev) => ({
+                  ...prev,
+                  sewProjects: (prev.sewProjects || []).filter((p) => p.id !== id),
+                }),
+                { toastText: 'تم حذف المشروع', allowUndo: true }
+              )
+            }
+            onSewCashMovement={(type, name, amount) =>
+              commitDB(
+                (prev) => ({
+                  ...prev,
+                  tx: [
+                    makeTransaction({
+                      accountId: 'sewing',
+                      cat: type === 'in' ? 'inc' : 'exp',
+                      type,
+                      name,
+                      amount,
+                    }),
+                    ...prev.tx,
+                  ],
+                }),
+                { toastText: `تم تسجيل ${name} (${fmt(amount)})`, allowUndo: true, chime: true }
+              )
+            }
+            onTransferSewingToFamily={(amount) => {
+              const transferId = nextId();
+              commitDB(
+                (prev) => ({
+                  ...prev,
+                  tx: [
+                    makeTransaction({
+                      accountId: 'family',
+                      cat: 'transfer',
+                      type: 'in',
+                      name: 'تحويل من صندوق الخياطة (وارد)',
+                      amount,
+                      transferId,
+                      transferFromAccountId: 'sewing',
+                      transferToAccountId: 'family',
+                    }),
+                    makeTransaction({
+                      accountId: 'sewing',
+                      cat: 'transfer',
+                      type: 'out',
+                      name: 'تحويل إلى الخزينة العائلية (صادر)',
+                      amount,
+                      transferId,
+                      transferFromAccountId: 'sewing',
+                      transferToAccountId: 'family',
+                    }),
+                    ...prev.tx,
+                  ],
+                }),
+                {
+                  toastText: `تم تحويل ${fmt(amount)} من الخياطة إلى العائلة`,
+                  allowUndo: true,
+                  chime: true,
+                }
+              );
+            }}
+            onAddSewDebt={(d) =>
+              commitDB(
+                (prev) => ({
+                  ...prev,
+                  debts: [
+                    { ...d, id: nextId(), paid: 0, date: todayLabel(), ym: currentYM() },
+                    ...(prev.debts || []),
+                  ],
+                }),
+                { toastText: `تم تسجيل دين الورشة: ${d.name}`, allowUndo: true, chime: true }
+              )
+            }
+            onPaySewDebt={(d: SewDebtRecord) => {
+              const rem = Math.max(0, d.amount - d.paid);
+              setModal({
+                kind: 'input',
+                title: `${d.type === 'in' ? 'تحصيل مستحق' : 'تسديد دين'} — ${d.name}`,
+                message: `المتبقي حالياً: ${fmt(rem)}`,
+                initialValue: String(rem),
+                inputType: 'number',
+                checkboxLabel: 'تسجيل الحركة في صندوق الخياطة',
+                checkboxDefault: true,
+                confirmLabel: 'تأكيد الدفعة',
+                onSubmit: (val, applyCashbox) => {
+                  const amt = Math.min(rem, Math.max(0, Number(val) || 0));
+                  if (amt <= 0) return;
+                  commitDB(
+                    (prev) => ({
+                      ...prev,
+                      debts: (prev.debts || []).map((x) =>
+                        x.id === d.id ? { ...x, paid: x.paid + amt } : x
+                      ),
+                      tx: applyCashbox
+                        ? [
+                            makeTransaction({
+                              accountId: 'sewing',
+                              cat: d.type === 'in' ? 'inc' : 'debt_payment',
+                              type: d.type,
+                              name: `${d.type === 'in' ? 'تحصيل مستحق ورشة' : 'تسديد دين ورشة'}: ${d.name}`,
+                              amount: amt,
+                            }),
+                            ...prev.tx,
+                          ]
+                        : prev.tx,
+                    }),
+                    {
+                      toastText: `تم تسجيل ${fmt(amt)} لـ ${d.name}`,
+                      allowUndo: true,
+                      chime: true,
+                    }
+                  );
+                },
+              });
+            }}
+            onDeleteSewDebt={(id) =>
+              commitDB(
+                (prev) => ({
+                  ...prev,
+                  debts: (prev.debts || []).filter((d) => d.id !== id),
+                }),
+                { toastText: 'تم حذف سجل دين الورشة', allowUndo: true }
+              )
+            }
           />
         )}
 
-        {page === 'reports' && <ReportsView db={db} />}
+        {page === 'reports' && (
+          <ReportsView
+            db={db}
+            onDeleteTransaction={(id) =>
+              commitDB(
+                (prev) => ({ ...prev, tx: prev.tx.filter((t) => t.id !== id) }),
+                { toastText: 'تم حذف العملية', allowUndo: true }
+              )
+            }
+            onOpenMonthClose={() => setMonthCloseOpen(true)}
+            onNotify={showToast}
+          />
+        )}
 
         {page === 'tools' && (
           <ToolsSettingsView
@@ -1272,6 +1972,175 @@ export default function App() {
             onToggleSound={() =>
               commitDB((prev) => ({ ...prev, sound: !prev.sound }))
             }
+            onToggleAppLock={() =>
+              commitDB(
+                (prev) => {
+                  const nextVal = !prev.appLockEnabled;
+                  return { ...prev, appLockEnabled: nextVal };
+                },
+                {
+                  toastText: db.appLockEnabled
+                    ? 'تم تعطيل قفل التطبيق عند الفتح'
+                    : 'تم تفعيل قفل التطبيق بالرمز السري عند الفتح',
+                }
+              )
+            }
+            onLockNow={() => setIsAppLocked(true)}
+            onAddQuickExpense={(title, amount, emoji) =>
+              commitDB(
+                (prev) => ({
+                  ...prev,
+                  quickExpenses: [
+                    ...prev.quickExpenses,
+                    { id: `qe_${nextId()}`, title, amount, emoji },
+                  ],
+                }),
+                { toastText: `تمت إضافة الزر السريع «${title}»` }
+              )
+            }
+            onDeleteQuickExpense={(id) =>
+              commitDB(
+                (prev) => ({
+                  ...prev,
+                  quickExpenses: prev.quickExpenses.filter((q) => q.id !== id),
+                }),
+                { toastText: 'تم حذف الزر السريع', allowUndo: true }
+              )
+            }
+            onAddAccountBook={(kind, name, phone, note) =>
+              commitDB(
+                (prev) => ({
+                  ...prev,
+                  accountsBook: [
+                    {
+                      id: nextId(),
+                      kind,
+                      name,
+                      phone: phone || undefined,
+                      note: note || undefined,
+                      entries: [],
+                    },
+                    ...(prev.accountsBook || []),
+                  ],
+                }),
+                { toastText: `تمت إضافة حساب «${name}»`, chime: true }
+              )
+            }
+            onAddAccountBookEntry={(accountId, sign, defaultLabel) => {
+              const acc = (db.accountsBook || []).find((a) => a.id === accountId);
+              if (!acc) return;
+              setModal({
+                kind: 'input',
+                title: `${defaultLabel} — ${acc.name}`,
+                message:
+                  sign > 0
+                    ? 'سجّل المبلغ الجديد على هذا الحساب:'
+                    : 'سجّل مبلغ الدفعة / التسديد:',
+                placeholder: 'المبلغ (دج)',
+                inputType: 'number',
+                confirmLabel: defaultLabel,
+                onSubmit: (val) => {
+                  const amt = Math.max(0, Number(val) || 0);
+                  if (amt <= 0) return;
+                  commitDB(
+                    (prev) => ({
+                      ...prev,
+                      accountsBook: (prev.accountsBook || []).map((a) =>
+                        a.id === accountId
+                          ? {
+                              ...a,
+                              entries: [
+                                {
+                                  id: nextId(),
+                                  delta: sign * amt,
+                                  note: defaultLabel,
+                                  date: todayLabel(),
+                                  ym: currentYM(),
+                                },
+                                ...a.entries,
+                              ],
+                            }
+                          : a
+                      ),
+                    }),
+                    { toastText: `تم تسجيل ${fmt(amt)} في حساب ${acc.name}`, allowUndo: true, chime: true }
+                  );
+                },
+              });
+            }}
+            onDeleteAccountBook={(accountId) =>
+              commitDB(
+                (prev) => ({
+                  ...prev,
+                  accountsBook: (prev.accountsBook || []).filter((a) => a.id !== accountId),
+                }),
+                { toastText: 'تم حذف الحساب', allowUndo: true }
+              )
+            }
+            onUpdateSewingRates={(meterPrice, threadPrice) =>
+              commitDB(
+                (prev) => ({ ...prev, meterPrice, threadPrice }),
+                { toastText: 'تم حفظ أسعار الخياطة الافتراضية', chime: true }
+              )
+            }
+            onAddCatalogProduct={(group, name, emoji) =>
+              commitDB(
+                (prev) => ({
+                  ...prev,
+                  catalog: [
+                    ...prev.catalog,
+                    { id: nextId(), name, group, price: 0, unit: 'حبة', emoji },
+                  ],
+                }),
+                { toastText: `تمت إضافة «${name}» للكتالوج` }
+              )
+            }
+            onSelectiveReset={(sections) => {
+              if (!Object.values(sections).some(Boolean)) {
+                showToast('اختر قسماً واحداً على الأقل للتصفير');
+                return;
+              }
+              setModal({
+                kind: 'confirm',
+                title: 'تأكيد التصفير الاختياري',
+                message: 'سيتم تصفير الأقسام التي اخترتها فقط مع الحفاظ على باقي البيانات. هل أنت متأكد؟',
+                confirmLabel: 'تصفير المحدد',
+                danger: true,
+                onConfirm: () => {
+                  const ym = currentYM();
+                  commitDB(
+                    (prev) => {
+                      const nextMonthSalaries = { ...prev.monthSalaries };
+                      if (sections.salary) {
+                        nextMonthSalaries[ym] = { s1: 0, s2: 0 };
+                      }
+                      const nextTx = prev.tx.filter((t) => {
+                        const acc = transactionAccount(t);
+                        if (sections.homeTx && acc === 'family' && getTxYM(t) === ym) return false;
+                        if (sections.sewing && acc === 'sewing') return false;
+                        return true;
+                      });
+                      return {
+                        ...prev,
+                        s1: sections.salary ? 0 : prev.s1,
+                        s2: sections.salary ? 0 : prev.s2,
+                        monthSalaries: nextMonthSalaries,
+                        tx: nextTx,
+                        accounts: sections.sewing
+                          ? {
+                              ...prev.accounts,
+                              sewing: { ...prev.accounts.sewing, openingBalance: 0 },
+                            }
+                          : prev.accounts,
+                        homeDebts: sections.homeDebts ? [] : prev.homeDebts,
+                        debts: sections.sewingDebts ? [] : prev.debts,
+                      };
+                    },
+                    { toastText: 'تم تصفير الأقسام المحددة بنجاح', allowUndo: true }
+                  );
+                },
+              });
+            }}
             onExportBackup={() => {
               const json = JSON.stringify(db, null, 2);
               const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
@@ -1315,7 +2184,7 @@ export default function App() {
       </main>
 
       {/* Mobile Bottom Navigation Bar */}
-      <nav className="no-print fixed right-0 bottom-0 left-0 z-30 border-t border-slate-200 bg-white/95 backdrop-blur-xs dark:border-slate-800 dark:bg-slate-900/95 md:hidden">
+      <nav className="no-print safe-bottom fixed right-0 bottom-0 left-0 z-30 border-t border-slate-200 bg-white/95 backdrop-blur-xs dark:border-slate-800 dark:bg-slate-900/95 md:hidden">
         <div className="grid grid-cols-4 gap-0.5 px-1 py-1 sm:grid-cols-8">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
@@ -1338,6 +2207,73 @@ export default function App() {
           })}
         </div>
       </nav>
+
+      {/* Quick Add Floating Action Button */}
+      <QuickAddFab
+        db={db}
+        onNavigate={setPage}
+        onQuickCashExpense={(title, amount, person) =>
+          commitDB(
+            (prev) => ({
+              ...prev,
+              tx: [
+                makeTransaction({
+                  accountId: 'family',
+                  cat: 'exp',
+                  type: 'out',
+                  name: title,
+                  amount,
+                  person: person || prev.family[0] || '',
+                }),
+                ...prev.tx,
+              ],
+            }),
+            { toastText: `تم خصم ${title} (${fmt(amount)})`, allowUndo: true, chime: true }
+          )
+        }
+        onQuickStoreDebt={(creditor, item, amount, due) =>
+          commitDB(
+            (prev) => ({
+              ...prev,
+              homeDebts: [
+                {
+                  id: nextId(),
+                  creditor,
+                  item,
+                  activity: 'مشتريات',
+                  amount,
+                  paid: 0,
+                  payments: [],
+                  due: due || undefined,
+                  date: todayLabel(),
+                  ym: currentYM(),
+                  direction: 'out',
+                },
+                ...prev.homeDebts,
+              ],
+            }),
+            { toastText: `تم تسجيل دين لـ ${creditor} (${fmt(amount)})`, allowUndo: true, chime: true }
+          )
+        }
+        onQuickMovement={(accountId, type, name, amount) =>
+          commitDB(
+            (prev) => ({
+              ...prev,
+              tx: [
+                makeTransaction({
+                  accountId,
+                  cat: type === 'in' ? 'inc' : 'exp',
+                  type,
+                  name,
+                  amount,
+                }),
+                ...prev.tx,
+              ],
+            }),
+            { toastText: `تم تسجيل ${name} (${fmt(amount)})`, allowUndo: true, chime: true }
+          )
+        }
+      />
 
       {/* Dialog Modal */}
       <DialogModal request={modal} onClose={() => setModal(null)} />

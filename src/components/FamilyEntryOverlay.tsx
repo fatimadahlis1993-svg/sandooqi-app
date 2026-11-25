@@ -58,8 +58,8 @@ export const FamilyEntryOverlay: React.FC<FamilyEntryOverlayProps> = ({
 
   return (
     <div className="min-h-screen bg-[#fdf8ef] pb-12 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
-      <header className="border-b border-emerald-800 bg-emerald-700 px-4 py-3 text-white">
-        <div className="mx-auto flex max-w-2xl items-center justify-between gap-3">
+      <header className="safe-top border-b border-emerald-800 bg-emerald-700 text-white">
+        <div className="mx-auto flex max-w-2xl items-center justify-between gap-3 px-4 py-3">
           <div>
             <h1 className="text-base font-bold">صندوقي — وضع العائلة</h1>
             <p className="text-xs text-emerald-100">
@@ -191,11 +191,11 @@ export const FamilyEntryOverlay: React.FC<FamilyEntryOverlayProps> = ({
               placeholder="أضف غرضاً لقائمة السوق..."
               value={mktInput}
               onChange={(e) => setMktInput(e.target.value)}
-              className="flex-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-emerald-600 dark:border-slate-700 dark:bg-slate-800"
+              className="min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-emerald-600 dark:border-slate-700 dark:bg-slate-800"
             />
             <button
               type="submit"
-              className="inline-flex items-center gap-1 rounded-xl bg-emerald-700 px-3.5 py-2 text-sm font-bold text-white"
+              className="inline-flex shrink-0 items-center gap-1 rounded-xl bg-emerald-700 px-3.5 py-2 text-sm font-bold text-white"
             >
               <Plus className="h-4 w-4" />
               إضافة
@@ -244,6 +244,19 @@ export const FamilyEntryOverlay: React.FC<FamilyEntryOverlayProps> = ({
             )}
           </div>
         </section>
+
+        <button
+          type="button"
+          onClick={() => {
+            setPinError('');
+            setPinInput('');
+            setShowPinDialog(true);
+          }}
+          className="flex w-full items-center justify-center gap-2 rounded-2xl border border-emerald-700 bg-emerald-700/10 py-3 text-sm font-bold text-emerald-800 hover:bg-emerald-700/20 dark:border-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-300"
+        >
+          <Lock className="h-4 w-4" />
+          <span>العودة إلى القائمة الرئيسية (فتح وضع المدير)</span>
+        </button>
       </main>
 
       {showPinDialog && (

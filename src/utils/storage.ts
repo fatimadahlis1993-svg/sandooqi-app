@@ -1,5 +1,5 @@
 import { AccountId, SandooqiDB } from '../types/sandooqi';
-import { createDefaultCatalog, currentYM, getTxYM } from './finance';
+import { createDefaultCatalog, currentYM, getTxYM, normArDigits } from './finance';
 
 const IDB_NAME = 'sandooqi_app_db';
 const IDB_VERSION = 1;
@@ -41,6 +41,11 @@ export function createDefaultDB(): SandooqiDB {
     facPlans: [],
     obligations: [],
     orders: [],
+    measurements: [],
+    sewMaterials: [],
+    sewServices: [],
+    sewProjects: [],
+    debts: [],
     marketList: [],
     family: ['إسلام', 'محمد', 'يوسف', 'نعيمة'],
     tx: [],
@@ -48,6 +53,7 @@ export function createDefaultDB(): SandooqiDB {
     rentDebts: [],
     catalog: createDefaultCatalog(),
     warranties: [],
+    accountsBook: [],
     quickExpenses: [
       { id: 'q1', title: 'خبز', amount: 40, emoji: '🥖' },
       { id: 'q2', title: 'حليب', amount: 120, emoji: '🥛' },
@@ -56,6 +62,7 @@ export function createDefaultDB(): SandooqiDB {
     ],
     familyEntryOnlyMode: false,
     activeFamilyMember: 'إسلام',
+    appLockEnabled: false,
   };
 }
 
@@ -102,6 +109,11 @@ export function normalizeSandooqiDB(raw: Partial<SandooqiDB> | null | undefined)
     facPlans: Array.isArray(raw.facPlans) ? raw.facPlans.filter(Boolean) : [],
     obligations: Array.isArray(raw.obligations) ? raw.obligations.filter(Boolean) : [],
     orders: Array.isArray(raw.orders) ? raw.orders.filter(Boolean) : [],
+    measurements: Array.isArray(raw.measurements) ? raw.measurements.filter(Boolean) : [],
+    sewMaterials: Array.isArray(raw.sewMaterials) ? raw.sewMaterials.filter(Boolean) : [],
+    sewServices: Array.isArray(raw.sewServices) ? raw.sewServices.filter(Boolean) : [],
+    sewProjects: Array.isArray(raw.sewProjects) ? raw.sewProjects.filter(Boolean) : [],
+    debts: Array.isArray(raw.debts) ? raw.debts.filter(Boolean) : [],
     marketList: Array.isArray(raw.marketList)
       ? raw.marketList.filter(Boolean).map((m) => ({
           id: Number(m.id) || Date.now(),
@@ -133,18 +145,22 @@ export function normalizeSandooqiDB(raw: Partial<SandooqiDB> | null | undefined)
       : [],
     homeDebts: Array.isArray(raw.homeDebts) ? raw.homeDebts.filter(Boolean) : [],
     rentDebts: Array.isArray(raw.rentDebts) ? raw.rentDebts.filter(Boolean) : [],
-    catalog:
-      Array.isArray(raw.catalog) && raw.catalog.length > 0
-        ? raw.catalog.filter(Boolean).map((c) => ({
-            id: Number(c.id) || Date.now(),
-            name: c.name || 'منتج',
-            group: c.group || 'أخرى',
-            price: Number(c.price) || 0,
-            unit: c.unit || 'حبة',
-            emoji: c.emoji || '🛍️',
-          }))
-        : def.catalog,
+    catalog: (() => {
+      if (!Array.isArray(raw.catalog) || raw.catalog.length === 0) return def.catalog;
+      const existing = raw.catalog.filter(Boolean).map((c) => ({
+        id: Number(c.id) || Date.now(),
+        name: c.name || 'منتج',
+        group: c.group || 'أخرى',
+        price: Number(c.price) || 0,
+        unit: c.unit || 'حبة',
+        emoji: c.emoji || '🛍️',
+      }));
+      const seen = new Set(existing.map((c) => c.name.trim()));
+      const missing = def.catalog.filter((d) => !seen.has(d.name.trim()));
+      return missing.length > 0 ? [...existing, ...missing] : existing;
+    })(),
     warranties: Array.isArray(raw.warranties) ? raw.warranties.filter(Boolean) : [],
+    accountsBook: Array.isArray(raw.accountsBook) ? raw.accountsBook.filter(Boolean) : [],
     quickExpenses:
       Array.isArray(raw.quickExpenses) && raw.quickExpenses.length > 0
         ? raw.quickExpenses.filter(Boolean)
@@ -156,6 +172,7 @@ export function normalizeSandooqiDB(raw: Partial<SandooqiDB> | null | undefined)
     monthArchive:
       raw.monthArchive && typeof raw.monthArchive === 'object' ? raw.monthArchive : {},
     monthClosePending: Array.isArray(raw.monthClosePending) ? raw.monthClosePending : [],
+    appLockEnabled: Boolean(raw.appLockEnabled),
   };
 
   merged.accounts = {
@@ -309,26 +326,28 @@ function legacyHashPin(pin: string): string {
 }
 
 export async function hashPinSha256(pin: string): Promise<string> {
+  const cleanPin = normArDigits(pin).trim();
   if (typeof crypto !== 'undefined' && crypto.subtle) {
-    const enc = new TextEncoder().encode(`sandooqi_sha256_v1:${pin}`);
+    const enc = new TextEncoder().encode(`sandooqi_sha256_v1:${cleanPin}`);
     const digest = await crypto.subtle.digest('SHA-256', enc);
     const hex = Array.from(new Uint8Array(digest))
       .map((b) => b.toString(16).padStart(2, '0'))
       .join('');
     return `s256$${hex}`;
   }
-  return legacyHashPin(pin);
+  return legacyHashPin(cleanPin);
 }
 
 export async function verifyPin(input: string, stored: string): Promise<boolean> {
+  const cleanInput = normArDigits(input).trim();
   const raw = String(stored || '1234');
   if (raw.startsWith('s256$')) {
-    return (await hashPinSha256(input)) === raw;
+    return (await hashPinSha256(cleanInput)) === raw;
   }
   if (raw.startsWith('h$')) {
-    return legacyHashPin(input) === raw;
+    return legacyHashPin(cleanInput) === raw;
   }
-  return input === raw;
+  return cleanInput === normArDigits(raw).trim();
 }
 
 export async function compressImageFile(file: File, maxDim = 960, quality = 0.72): Promise<string> {

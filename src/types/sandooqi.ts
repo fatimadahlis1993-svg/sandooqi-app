@@ -105,6 +105,25 @@ export interface Obligation {
   amount: number;
   dueDay: number;
   paidMonths: string[];
+  creditor?: string;
+  photo?: string;
+}
+
+export interface AccountBookTx {
+  id: number;
+  delta: number;
+  note: string;
+  date: string;
+  ym: string;
+}
+
+export interface AccountBookEntry {
+  id: number;
+  kind: 'customer' | 'supplier';
+  name: string;
+  phone?: string;
+  note?: string;
+  entries: AccountBookTx[];
 }
 
 export interface FacPlan {
@@ -118,21 +137,124 @@ export interface FacPlan {
 
 export type OrderStage = 'جديد' | 'قيد التفصيل' | 'جاهز' | 'مسلّم';
 
+export interface OrderFabricLine {
+  id: string;
+  name: string;
+  source: 'customer' | 'workshop';
+  meters: number;
+  rate: number;
+  buyRate: number;
+  laborRate?: number | null;
+  charge: number;
+  cost: number;
+}
+
+export interface OrderSupplyLine {
+  id: string;
+  name: string;
+  cost: number;
+  stockId?: number;
+  qty?: number;
+  unit?: string;
+}
+
+export interface OrderMeasurements {
+  len?: string;
+  sh?: string;
+  chest?: string;
+  waist?: string;
+  hip?: string;
+  sleeve?: string;
+  note?: string;
+}
+
 export interface SewingOrder {
   id: number;
   client: string;
   phone?: string;
   model: string;
   meters: number;
+  meterRate?: number;
+  flatLabor?: number;
+  adjustment?: number;
   price: number;
   paid: number;
   fabricCost: number;
   threadCost: number;
   stage: OrderStage;
+  fittingDate?: string;
   dueDate?: string;
   date: string;
   ym: string;
   notes?: string;
+  photo?: string;
+  fabrics?: OrderFabricLine[];
+  supplies?: OrderSupplyLine[];
+  measurements?: OrderMeasurements;
+}
+
+export interface MeasurementRecord {
+  id: number;
+  name: string;
+  phone?: string;
+  len: string;
+  sh: string;
+  chest: string;
+  waist: string;
+  hip: string;
+  sleeve: string;
+  note: string;
+  date: string;
+}
+
+export interface SewMaterial {
+  id: number;
+  name: string;
+  unit: string;
+  qty: number;
+  cost: number;
+  min: number;
+  date: string;
+}
+
+export interface SewServiceRecord {
+  id: number;
+  client: string;
+  item: string;
+  meters: number;
+  rate: number;
+  price: number;
+  thread: number;
+  supplies: number;
+  paid: number;
+  date: string;
+  ym: string;
+}
+
+export interface SewProjectRecord {
+  id: number;
+  name: string;
+  meters: number;
+  fabricRate: number;
+  fabric: number;
+  supplies: number;
+  other: number;
+  sale: number;
+  paid: number;
+  status: 'work' | 'ready' | 'sold';
+  date: string;
+  ym: string;
+}
+
+export interface SewDebtRecord {
+  id: number;
+  type: 'in' | 'out';
+  name: string;
+  amount: number;
+  paid: number;
+  due?: string;
+  date: string;
+  ym: string;
 }
 
 export interface MarketItem {
@@ -227,6 +349,11 @@ export interface SandooqiDB {
   facPlans: FacPlan[];
   obligations: Obligation[];
   orders: SewingOrder[];
+  measurements: MeasurementRecord[];
+  sewMaterials: SewMaterial[];
+  sewServices: SewServiceRecord[];
+  sewProjects: SewProjectRecord[];
+  debts: SewDebtRecord[];
   marketList: MarketItem[];
   family: string[];
   tx: Transaction[];
@@ -234,9 +361,11 @@ export interface SandooqiDB {
   rentDebts: RentDebt[];
   catalog: CatalogItem[];
   warranties: WarrantyRecord[];
+  accountsBook: AccountBookEntry[];
   quickExpenses: QuickExpensePreset[];
   familyEntryOnlyMode: boolean;
   activeFamilyMember: string;
+  appLockEnabled?: boolean;
 }
 
 export interface AccountSummary {
