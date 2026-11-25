@@ -1,0 +1,6 @@
+{
+  "name": "صندوقي",
+  "description": "صندوقي: تطبيق محلي ذكي لإدارة الميزانية العائلية والشخصية والدخل والمصاريف والديون والادخار وطلبيات الخياطة وضمانات الأجهزة، يعمل دون إنترنت.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

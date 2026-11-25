@@ -1,0 +1,45 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    --font-ar: "IBM Plex Sans Arabic", "Noto Sans Arabic", "Tajawal", Tahoma, Arial, sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+
+  html {
+    font-family: var(--font-ar);
+  }
+
+  body {
+    font-family: var(--font-ar);
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.privacy-blur {
+  filter: blur(7px);
+  user-select: none;
+  transition: filter 0.15s ease;
+}
+
+.privacy-blur:active {
+  filter: none;
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+  }
+  .print-only-sheet {
+    border: none !important;
+    box-shadow: none !important;
+  }
+}
